@@ -1,3 +1,11 @@
+/* Welcome to catis        */
+/*    lang concat is #t == */
+
+/*
+ * Not original code
+ * Highly inspired (almost copied) by aocla, see ../inspiration/aocla.c
+*/
+
 /* -- imports -- */
 #include <stdio.h>
 #include <stdlib.h>
@@ -140,6 +148,7 @@ int is_symbol(int character) {
     switch (character) {
         case '@':
         case '$':
+        case '#':
         case '+':
         case '-':
         case '*':
@@ -150,6 +159,8 @@ int is_symbol(int character) {
         case '>':
         case '<':
         case '_':
+        case '.':
+        case '^':
         case '\'':
             return 1;
         default:
@@ -443,10 +454,6 @@ int compare(catis_object* a, catis_object* b) {
             return 1;
         }
         return 0;
-    }
-
-    else {
-        return COMPARE_TYPE_MISMATCH;
     }
 
     return COMPARE_TYPE_MISMATCH;
@@ -911,7 +918,7 @@ catis_procedure* new_procedure(catis_context* context, const char* name) {
 void add_procedure(
     catis_context* context,
     const char* name,
-    int(*c_procedure)(catis_context*),
+    int(*c_procedure)(catis_context *),
     catis_object* list
 ) {
     assert((c_procedure != NULL) + (list != NULL) == 1);
@@ -934,7 +941,9 @@ int add_string_procedure(
     const char* program
 ) {
     catis_object* list = parse_object(NULL, program, NULL, NULL);
-    if (program == NULL) {
+    if (program == NULL || list == NULL) {
+        printf("%s", name);
+        printf("Flo hit!");
         return 1;
     }
     add_procedure(context, name, NULL, list);
@@ -974,7 +983,7 @@ int library_math(catis_context* context) {
 }
 
 int library_compare(catis_context* context) {
-    if (check_stack_type(context, 2)) {
+    if (check_stack_length(context, 2)) {
         return 1;
     }
     catis_object* b = stack_pop(context);
@@ -1002,9 +1011,9 @@ int library_compare(catis_context* context) {
         switch (function_name[0]) {
             case '<': result = comparison < 0; break;
             case '>': result = comparison > 0; break;
-        }
+}
     }
-    stack_push(context, new_boolean(result));
+stack_push(context, new_boolean(result));
     release(a);
     release(b);
     return 0;
@@ -1128,9 +1137,358 @@ int library_up_eval(catis_context* context) {
     return return_value;
 }
 
-// TODO 956
+int library_print(catis_context* context) {
+    if (check_stack_length(context, 1)) {
+        return 1;
+    }
+    catis_object* object = stack_pop(context);
+    print_object(object, PRINT_RAW);
+    release(object);
+    return 0;
+}
+
+int library_println(catis_context* context) {
+    if (check_stack_length(context, 1)) {
+        return 1;
+    }
+    library_print(context);
+    printf("\n");
+    return 0;
+}
+
+int library_length(catis_context* context) {
+    if (check_stack_type(
+        context,
+        1,
+        CATIS_TYPE_LIST   |
+        CATIS_TYPE_TUPLE  |
+        CATIS_TYPE_STRING |
+        CATIS_TYPE_SYMBOL
+    )) {
+        return 1;
+    }
+    catis_object* object = stack_pop(context);
+    int length;
+    switch (object->type) {
+        case CATIS_TYPE_LIST:
+        case CATIS_TYPE_TUPLE:
+            length = object->list_or_tuple.length;
+            break;
+        case CATIS_TYPE_STRING:
+        case CATIS_TYPE_SYMBOL:
+            length = object->string_or_symbol.length;
+            break;
+    }
+    release(object);
+    stack_push(context, new_integer(length));
+    return 0;
+}
+
+int library_list_append(catis_context* context) {
+    // (list element -- list')
+    if (check_stack_type(context, 2, CATIS_TYPE_LIST, CATIS_TYPE_ANY)) {
+        return 1;
+    }
+    catis_object* element = stack_pop(context);
+    catis_object* list = get_unshared_object(stack_pop(context));
+    list->list_or_tuple.element = catis_reallocate(
+list->list_or_tuple.element,
+        sizeof(catis_object*) * (list->list_or_tuple.length + 1)
+    );
+    list->list_or_tuple.element[list->list_or_tuple.length] = element;
+    list->list_or_tuple.length++;
+    stack_push(context, list);
+    return 0;
+}
+
+int library_at(catis_context* context) {
+    // (list index -- element)
+    if (check_stack_type(
+        context,
+        2, 
+        CATIS_TYPE_LIST | CATIS_TYPE_TUPLE | CATIS_TYPE_STRING,
+        CATIS_TYPE_INT
+    )) {
+        return 1;
+    }
+    catis_object* index_object = stack_pop(context);
+    catis_object* object = stack_pop(context);
+
+    int index = index_object->integer;
+    release(index_object);
+
+    size_t length =
+        object->type == CATIS_TYPE_STRING ?
+        object->string_or_symbol.length :
+        object->list_or_tuple.length;
+    if (index < 0) {
+        index = length + index;
+    }
+    if (index < 0 || (size_t)index >= length) {
+        stack_push(context, new_boolean(0));
+    }
+    else {
+        if (object->type == CATIS_TYPE_STRING) {
+            stack_push(
+                context,
+                new_string(object->string_or_symbol.pointer + index, 1)
+            );
+        }
+        else {
+            stack_push(context, object->list_or_tuple.element[index]);
+            retain(object->list_or_tuple.element[index]);
+        }
+    }
+    release(object);
+    return 0;
+}
+
+int library_concatenate(catis_context* context) {
+    if (check_stack_length(context, 2)) {
+        return 1;
+    }
+    if (context->stack[context->stack_length - 1]->type !=
+        context->stack[context->stack_length - 2]->type
+    ) {
+        set_error(
+            context,
+            NULL,
+            "concatenate expects two objects of the same type"
+        );
+        return 1;
+    }
+    if (check_stack_type(
+        context,
+        2,
+        CATIS_TYPE_LIST | CATIS_TYPE_TUPLE |
+        CATIS_TYPE_STRING | CATIS_TYPE_SYMBOL,
+        CATIS_TYPE_LIST | CATIS_TYPE_TUPLE |
+        CATIS_TYPE_STRING | CATIS_TYPE_SYMBOL
+    )) {
+        return 1;
+    }
+
+    catis_object* source = stack_pop(context);
+    catis_object* destination = stack_peek(context, 0);
+    destination = get_unshared_object(destination);
+    stack_set(context, 0, destination);
+
+    if (source->type & (CATIS_TYPE_STRING | CATIS_TYPE_SYMBOL)) {
+        destination->string_or_symbol.pointer = catis_reallocate(
+            destination->string_or_symbol.pointer,
+            destination->string_or_symbol.length +
+            source->string_or_symbol.length +
+            1
+        );
+        memcpy(
+            destination->string_or_symbol.pointer +
+            destination->string_or_symbol.length,
+            source->string_or_symbol.pointer,
+            source->string_or_symbol.length + 1
+        );
+        destination->string_or_symbol.length +=
+            source->string_or_symbol.length;
+    }
+    else {
+        for (size_t i = 0; i < source->list_or_tuple.length; i++) {
+            retain(source->list_or_tuple.element[i]);
+        }
+        destination->list_or_tuple.element = catis_reallocate(
+            destination->list_or_tuple.element,
+            (destination->list_or_tuple.length +
+            source->list_or_tuple.length) * sizeof(catis_object*)
+        );
+        memcpy(
+            destination->list_or_tuple.element +
+            destination->list_or_tuple.length,
+            source->list_or_tuple.element,
+            source->list_or_tuple.length * sizeof(catis_object*)
+        );
+        destination->list_or_tuple.length += source->list_or_tuple.length;
+    }
+    release(source);
+    return 0;
+}
+
+int library_to_tuple(catis_context* context) {
+    if (check_stack_type(context, 1, CATIS_TYPE_LIST)) {
+        return 1;
+    }
+    catis_object* list = stack_pop(context);
+    list = get_unshared_object(list);
+    list->type = CATIS_TYPE_TUPLE;
+    list->list_or_tuple.quoted = 0;
+    stack_push(context, list);
+    return 0;
+}
+
+int library_show_stack(catis_context* context) {
+    stack_show(context);
+    return 0;
+};
+
+void load_library(catis_context* context) {
+    add_procedure(context, "+", library_math, NULL);
+    add_procedure(context, "-", library_math, NULL);
+    add_procedure(context, "*", library_math, NULL);
+    add_procedure(context, "/", library_math, NULL);
+    add_procedure(context, "==", library_compare, NULL);
+    add_procedure(context, "!=", library_compare, NULL);
+    add_procedure(context, ">=", library_compare, NULL);
+    add_procedure(context, "<=", library_compare, NULL);
+    add_procedure(context, ">",  library_compare, NULL);
+    add_procedure(context, "<",  library_compare, NULL);
+    add_procedure(context, "sort", library_sort, NULL);
+    add_procedure(context, "define", library_define, NULL);
+    add_procedure(context, "if",      library_if, NULL);
+    add_procedure(context, "if-else", library_if, NULL);
+    add_procedure(context, "while",   library_if, NULL);
+    add_procedure(context, "eval", library_eval, NULL);
+    add_procedure(context, "up-eval", library_up_eval, NULL);
+    add_procedure(context, "prin", library_print, NULL);
+    add_procedure(context, "print", library_println, NULL);
+    add_procedure(context, "#", library_length, NULL);
+    add_procedure(context, "<-", library_list_append, NULL);
+    add_procedure(context, "@", library_at, NULL);
+    add_procedure(context, ".", library_show_stack, NULL);
+    add_procedure(context, "^", library_concatenate, NULL);
+    add_procedure(context, "to-tuple", library_to_tuple, NULL);
+
+    add_string_procedure(context, "dup", "[(x) $x $x]");
+    add_string_procedure(context, "swap", "[(x y) $y $x]");
+    add_string_procedure(context, "drop", "[(_)]");
+
+    add_string_procedure(
+        context, "map",
+        "[(l f)   $l # (s)   0 (i)   [] \
+          [$i $s <] [ \
+           $l $i @   $f up-eval \
+           <- \
+           $i 1 + (i) \
+          ] while]"
+    );
+    add_string_procedure(
+        context, "each",
+        "[(l f) $l # (s) 0 (i) \
+          [$i $s <] [ \
+           $l $i @ $f up-eval \
+           $i 1 + (i) \
+          ] while]"
+    );
+    add_string_procedure(context, "head", "[0 @]");
+    add_string_procedure(
+        context, "tail",
+        "[#t (d) [] (n) [ \
+          [$d] [#f (d) drop] [$n swap <- (n)] if-else \
+         ] foreach $n]"
+    );
+}
+
+/* -- repl -- */
+void repl(void) {
+    char buffer[1024];
+    catis_context* context = new_interpreter();
+    while(1) {
+        printf("catis> ");
+        fflush(stdout);
+
+        buffer[0] = '[';
+
+        if (fgets(buffer + 1, sizeof(buffer) - 2, stdin) == NULL) {
+            break;
+        }
+        size_t length = strlen(buffer);
+        if (length && buffer[length - 1] == '\n') {
+            buffer[--length] = 0;
+        }
+        if (length == 0) {
+            continue;
+        }
+
+        buffer[length] = ']';
+        buffer[length + 1] = 0;
+
+        catis_object* program = parse_object(context, buffer, NULL, NULL);
+        if (!program) {
+            printf("Parsing program: %s\n", context->error_string);
+            continue;
+        }
+        if (eval(context, program)) {
+            printf("%s\n", context->error_string);
+        }
+        else {
+            stack_show(context);
+        }
+        release(program);
+    }
+}
+
+int eval_file(const char* filename, char** argv, int argc) {
+    FILE* file_pointer = fopen(filename, "r");
+    if (!file_pointer) {
+        perror("Opening file");
+        return 1;
+    }
+
+    int increment_amount = 1024;
+    char* buffer = catis_allocate(increment_amount);
+    size_t buffer_length = 1, nread;
+    size_t space_left = increment_amount - buffer_length;
+    buffer[0] = '[';
+    while (
+        nread = fread(buffer + buffer_length, 1, space_left, file_pointer)
+    ) {
+        buffer_length += nread;
+        space_left -= nread;
+        if (space_left == 0) {
+            buffer =
+                catis_reallocate(buffer, buffer_length + increment_amount);
+            space_left += increment_amount;
+        }
+    }
+    if (space_left < 2) {
+        buffer = catis_reallocate(buffer, buffer_length + 2);
+    }
+    buffer[buffer_length++] = ']';
+    buffer[buffer_length++] = 0;
+    fclose(file_pointer);
+
+    catis_context* context = new_interpreter();
+    int line = 1;
+    catis_object* program = parse_object(context, buffer, NULL, &line);
+    free(buffer);
+    if (!program) {
+        printf("Parsing program: %s\n", context->error_string);
+        return 1;
+    }
+
+    for (int i = 0; i < argc; i++) {
+        catis_object* object = parse_object(NULL, argv[i], NULL, 0);
+        if (!object) {
+            printf("Parsing program: %s\n", context->error_string);
+            release(object);
+            return 1;
+        }
+        stack_push(context, object);
+    }
+
+    int return_value = eval(context, program);
+    if (return_value) {
+            printf("Runtime error: %s\n", context->error_string);
+    }
+    release(program);
+    return return_value;
+}
 
 /* -- main -- */
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 1) {
+        repl();
+    }
+    else if (argc >= 2) {
+        if (eval_file(argv[1], argv + 2, argc - 2)) {
+            return 1;
+        }
+    }
     return 0;
 } 
