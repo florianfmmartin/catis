@@ -50,21 +50,21 @@ typedef struct catis_procedure {
 } catis_procedure;
 
 /* -- stack frames for local variables -- */
-#define CATIS_MAX_LOCALVARS 26
-typedef struct stack_frame {
+#define CATIS_MAX_LOCALVARS 256
+typedef struct stackframe {
     catis_object* locals[CATIS_MAX_LOCALVARS];
-    catis_procedure* current_procedure;
+    catis_procedure* procedure;
     int line;
-    struct stack_frame* previous;
-} stack_frame;
+    struct stackframe* previous;
+} stackframe;
 
 /* -- intrepret context -- */
 #define CATIS_ERROR_STRING_LENGTH 256
 typedef struct catis_context {
-    size_t current_stack_frame_length;
+    size_t stack_length;
     catis_object** stack;
-    catis_procedure* current_procedure;
-    stack_frame* current_stack_frame;
+    catis_procedure* procedure;
+    stackframe* frame;
     char error_string[CATIS_ERROR_STRING_LENGTH]; // to stock error messages
 } catis_context;
 
@@ -645,8 +645,8 @@ void set_error(
     }
 
     if (!pointer) {
-        pointer = context->current_stack_frame->current_procedure ?
-            context->current_stack_frame->current_procedure->name :
+        pointer = context->frame->procedure ?
+            context->frame->procedure->name :
             "unknow context";
     }
 
@@ -659,31 +659,31 @@ void set_error(
         strlen(pointer) > 30 ? "..." : ""
     );
 
-    stack_frame* current_stack_frame = context->current_stack_frame;
-    while (current_stack_frame && length < CATIS_ERROR_STRING_LENGTH) {
+    stackframe* frame = context->frame;
+    while (frame && length < CATIS_ERROR_STRING_LENGTH) {
         length += snprintf(
             context->error_string + length,
             CATIS_ERROR_STRING_LENGTH - length,
             " in %s:%d ",
-            current_stack_frame->current_procedure ?
-            current_stack_frame->current_procedure->name :
+            frame->procedure ?
+            frame->procedure->name :
             "unknown",
-            current_stack_frame->line
+            frame->line
         );
-        current_stack_frame = current_stack_frame->previous;
+        frame = frame->previous;
     }
 }
 
 /* -- stack frame utils -- */
-stack_frame* new_stack_frame(catis_context* context) {
-    stack_frame* frame = catis_allocate(sizeof(*frame));
+stackframe* new_stackframe(catis_context* context) {
+    stackframe* frame = catis_allocate(sizeof(*frame));
     memset(frame->locals, 0, sizeof(frame->locals));
-    frame->current_procedure = NULL;
-    frame->previous = context ? context->current_stack_frame : NULL;
+    frame->procedure = NULL;
+    frame->previous = context ? context->frame : NULL;
     return frame;
 }
 
-void release_stack_frame(stack_frame* frame) {
+void release_stackframe(stackframe* frame) {
     for (int i = 0; i < CATIS_MAX_LOCALVARS; i++) {
         release(frame->locals[i]);
     }
@@ -693,10 +693,10 @@ void release_stack_frame(stack_frame* frame) {
 /* -- interpreter constructor -- */
 catis_context* new_interpreter(void) {
     catis_context* interpreter = catis_allocate(sizeof(*interpreter));
-    interpreter->current_stack_frame_length = 0;
+    interpreter->stack_length = 0;
     interpreter->stack = NULL;
-    interpreter->current_procedure = NULL;
-    interpreter->current_stack_frame = new_stack_frame(NULL);
+    interpreter->procedure = NULL;
+    interpreter->frame = new_stackframe(NULL);
     load_library(interpreter);
     return interpreter;
 }
@@ -705,56 +705,211 @@ catis_context* new_interpreter(void) {
 void stack_push(catis_context* context, catis_object* object) {
     context->stack = catis_reallocate(
         context->stack,
-        sizeof(catis_object*) * (context->current_stack_frame_length + 1)
+        sizeof(catis_object*) * (context->stack_length + 1)
     );
-    context->stack[context->current_stack_frame_length++] = object;
+    context->stack[context->stack_length++] = object;
 }
 
 catis_object* stack_pop(catis_context* context) {
-    if (context->current_stack_frame_length == 0) {
+    if (context->stack_length == 0) {
         return NULL;
     } else {
-        return context->stack[--context->current_stack_frame_length];
+        return context->stack[--context->stack_length];
     }
 }
 
 catis_object* stack_peek(catis_context* context, size_t offset) {
-    if (context->current_stack_frame_length <= offset) {
+    if (context->stack_length <= offset) {
         return NULL;
     } else {
         return context->stack[
-            context->current_stack_frame_length - (offset + 1)
+            context->stack_length - (offset + 1)
         ];
     }
 }
 
 void stack_set(catis_context* context, size_t offset, catis_object* object) {
-    assert(context->current_stack_frame_length > offset);
-    context->stack[context->current_stack_frame_length - (offset + 1)] = object;
+    assert(context->stack_length > offset);
+    context->stack[context->stack_length - (offset + 1)] = object;
 }
 
 #define STACK_SHOW_MAX_ELEMENTS 16
 void stack_show(catis_context* context) {
-    ssize_t i = context->current_stack_frame_length - STACK_SHOW_MAX_ELEMENTS;
+    ssize_t i = context->stack_length - STACK_SHOW_MAX_ELEMENTS;
     if (i < 0) {
         i = 0;
     }
-    while (i < (ssize_t)context->current_stack_frame_length) {
+    while (i < (ssize_t)context->stack_length) {
         catis_object* object = context->stack[i];
         print_object(object, PRINT_COLOR | PRINT_REPR);
         printf(" ");
         i++;
     }
-    if (context->current_stack_frame_length > STACK_SHOW_MAX_ELEMENTS) {
+    if (context->stack_length > STACK_SHOW_MAX_ELEMENTS) {
         printf("[... %zu more objects ...]", i);
     }
-    if (context->current_stack_frame_length) {
+    if (context->stack_length) {
         printf("\n");
     }
 }
 
 /* -- eval -- */
-// TODO: ligne 612
+int eval(catis_context* context, catis_object* list) {
+    assert(list->type == CATIS_TYPE_LIST);
+
+    for (size_t i = 0; i < list->list_or_tuple.length; i++) {
+        catis_object* object = list->list_or_tuple.element[i];
+        catis_procedure* procedure;
+        context->frame->line = object->line;
+
+        switch (object->type) {
+            case CATIS_TYPE_TUPLE:
+                if (object->list_or_tuple.quoted) {
+                    catis_object* tuple = deep_copy(object);
+                    tuple->list_or_tuple.quoted = 0;
+                    stack_push(context, tuple);
+                    break;
+                }
+
+                // capture variables
+                if (context->stack_length < object->list_or_tuple.length) {
+                    set_error(
+                        context,
+                        object->list_or_tuple.element[
+                            context->stack_length
+                        ]->string_or_symbol.pointer,
+                        "Out of stack while capturing local"
+                    );
+                    return 1;
+                }
+
+                context->stack_length -= object->list_or_tuple.length;
+                for (size_t i = 0; i < object->list_or_tuple.length; i++) {
+                    int index =
+                        object->list_or_tuple.element[i]
+                            ->string_or_symbol.pointer[0];
+                    release(context->frame->locals[index]);
+                    context->frame->locals[index] =
+                        context->stack[context->stack_length + i];
+                }
+                break;
+            case CATIS_TYPE_SYMBOL:
+                if (object->string_or_symbol.quoted) {
+                    catis_object* symbol = deep_copy(object);
+                    symbol->string_or_symbol.quoted = 0;
+                    stack_push(context, symbol);
+                    break;
+                }
+
+                if (object->string_or_symbol.pointer[0] == '$') {
+                    int index = object->string_or_symbol.pointer[1];
+                    if (context->frame->locals[index] == NULL) {
+                        set_error(
+                            context,
+                            object->string_or_symbol.pointer,
+                            "Unbound local variable"
+                        );
+                        return 1;
+                    }
+                    stack_push(context, context->frame->locals[index]);
+                    retain(context->frame->locals[index]);
+                }
+                else {
+                    procedure = lookup_procedure(
+                        context,
+                        object->string_or_symbol.pointer
+                    );
+                    if (procedure == NULL) {
+                        set_error(
+                            context,
+                            object->string_or_symbol.pointer,
+                            "Symbol nout bound to procedure"
+                        );
+                        return 1;
+                    }
+                    if (procedure->c_procedure) {
+                        catis_procedure* previous = context->frame->procedure;
+                        context->frame->procedure = procedure;
+                        int error = procedure->c_procedure(context);
+                        context->frame->procedure = previous;
+                        if (error) {
+                            return error;
+                        }
+                    }
+                    // catis procedure
+                    else {
+                        stackframe* previous = context->frame;
+                        context->frame = new_stackframe(context);
+                        context->frame->procedure = procedure;
+                        int error = eval(context, procedure->procedure);
+                        release_stackframe(context->frame);
+                        context->frame = previous;
+                        if (error) {
+                            return error;
+                        }
+                    }
+                }
+                break;
+            default:
+                stack_push(context, object);
+                retain(object);
+                break;
+        }
+    }
+
+    return 0;
+}
+
+/* -- procedure utils -- */
+int check_stack_length(catis_context* context, size_t minimum) {
+    if (context->stack_length < minimum) {
+        set_error(context, NULL, "Out of stack");
+        return 1;
+    }
+    return 0;
+}
+
+int check_stack_type(catis_context* context, size_t count, ...) {
+    if (check_stack_length(context, count)) {
+        return 1;
+    }
+    va_list types;
+    va_start(types, count);
+    for (size_t i = 0; i < count; i++) {
+        int type = va_arg(types, int);
+        if (
+            !(type & context->stack[context->stack_length - (count - i)]->type)
+        ) {
+            set_error(context, NULL, "Type mismatch");
+            return 1;
+        }
+    }
+    va_end(types);
+    return 0;
+}
+
+catis_procedure* lookup_procedure(catis_context* context, const char* name) {
+    catis_procedure* this = context->procedure;
+    while (this) {
+        if (!strcmp(this->name, name)) {
+            return this;
+        }
+        this = this->next;
+    }
+    return NULL;
+}
+
+catis_procedure* new_procedure(catis_context* context, const char* name) {
+    catis_procedure* procedure = catis_allocate(sizeof(*procedure));
+    procedure->name = catis_allocate(strlen(name) + 1);
+    memcpy((char*)procedure->name, name, strlen(name) + 1);
+    procedure->next = context->procedure;
+    context->procedure = procedure;
+    return procedure;
+}
+
+// TODO: ligne 778
+
 
 /* -- main -- */
 int main() {
