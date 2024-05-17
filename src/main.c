@@ -424,11 +424,11 @@ int compare(catis_object* a, catis_object* b) {
         (a->type == CATIS_TYPE_STRING || a->type == CATIS_TYPE_SYMBOL) &&
         (b->type == CATIS_TYPE_STRING || b->type == CATIS_TYPE_SYMBOL)
     ) {
-        int comparaison = strcmp(
+        int comparison = strcmp(
             a->string_or_symbol.pointer,
             b->string_or_symbol.pointer
         );
-        return comparaison < 0 ? -1 : (comparaison > 0 ? 1 : 0);
+        return comparison < 0 ? -1 : (comparison > 0 ? 1 : 0);
     }
 
     // list or tuple
@@ -453,7 +453,7 @@ int compare(catis_object* a, catis_object* b) {
 }
 
 /* -- sorting utils -- */
-int quicksort_object_comparaison(const void* a, const void* b) {
+int quicksort_object_comparison(const void* a, const void* b) {
     catis_object** object_a = (catis_object**)a;
     catis_object** object_b = (catis_object**)b;
     return compare(object_a[0], object_b[0]);
@@ -797,7 +797,7 @@ int eval(catis_context* context, catis_object* list) {
                 if (object->string_or_symbol.quoted) {
                     catis_object* symbol = deep_copy(object);
                     symbol->string_or_symbol.quoted = 0;
-                    stack_push(context, symbol);
+stack_push(context, symbol);
                     break;
                 }
 
@@ -893,7 +893,7 @@ catis_procedure* lookup_procedure(catis_context* context, const char* name) {
     while (this) {
         if (!strcmp(this->name, name)) {
             return this;
-        }
+    }
         this = this->next;
     }
     return NULL;
@@ -908,8 +908,227 @@ catis_procedure* new_procedure(catis_context* context, const char* name) {
     return procedure;
 }
 
-// TODO: ligne 778
+void add_procedure(
+    catis_context* context,
+    const char* name,
+    int(*c_procedure)(catis_context*),
+    catis_object* list
+) {
+    assert((c_procedure != NULL) + (list != NULL) == 1);
+    catis_procedure* procedure = lookup_procedure(context, name);
+    if (procedure) {
+        if (procedure->procedure != NULL) {
+            release(procedure->procedure);
+            procedure->procedure = NULL;
+        }
+    } else {
+        procedure = new_procedure(context, name);
+    }
+    procedure->procedure = list;
+    procedure->c_procedure = c_procedure;
+}
 
+int add_string_procedure(
+    catis_context* context,
+    const char* name,
+    const char* program
+) {
+    catis_object* list = parse_object(NULL, program, NULL, NULL);
+    if (program == NULL) {
+        return 1;
+    }
+    add_procedure(context, name, NULL, list);
+    return 0;
+}
+
+/* -- the library -- */
+int library_math(catis_context* context) {
+    if (check_stack_type(context, 2, CATIS_TYPE_INT, CATIS_TYPE_INT)) {
+        return 1;
+    }
+    catis_object* object_b = stack_pop(context);
+    catis_object* object_a = stack_pop(context);
+
+    int b = object_b->integer;
+    int a = object_a->integer;
+
+    int result;
+    const char* function_name = context->frame->procedure->name;
+    if (function_name[0] == '+' && function_name[1] == 0) {
+        result = a + b;
+    }
+    else if (function_name[0] == '-' && function_name[1] == 0) {
+        result = a - b;
+    }
+    else if (function_name[0] == '*' && function_name[1] == 0) {
+        result = a * b;
+    }
+    else if (function_name[0] == '/' && function_name[1] == 0) {
+        result = a / b;
+    }
+
+    stack_push(context, new_integer(result));
+    release(object_b);
+    release(object_a);
+    return 0;
+}
+
+int library_compare(catis_context* context) {
+    if (check_stack_type(context, 2)) {
+        return 1;
+    }
+    catis_object* b = stack_pop(context);
+    catis_object* a = stack_pop(context);
+
+    int comparison = compare(a, b);
+    if (comparison == COMPARE_TYPE_MISMATCH) {
+        stack_push(context, a);
+        stack_push(context, b);
+        set_error(context, NULL, "Type mismatch in comparison");
+        return 1;
+    }
+
+    int result;
+    const char* function_name = context->frame->procedure->name;
+    if (function_name[1] == '=') {
+        switch (function_name[0]) {
+            case '=': result = comparison == 0; break;
+            case '!': result = comparison != 0; break;
+            case '<': result = comparison <= 0; break;
+            case '>': result = comparison >= 0; break;
+        }
+    }
+    else {
+        switch (function_name[0]) {
+            case '<': result = comparison < 0; break;
+            case '>': result = comparison > 0; break;
+        }
+    }
+    stack_push(context, new_boolean(result));
+    release(a);
+    release(b);
+    return 0;
+}
+
+int library_sort(catis_context* context) {
+    if (check_stack_type(context, 1, CATIS_TYPE_LIST)) {
+        return 1;
+    }
+    catis_object* list = stack_pop(context);
+    list = get_unshared_object(list);
+    qsort(
+        list->list_or_tuple.element,
+        list->list_or_tuple.length,
+        sizeof(catis_object*),
+        quicksort_object_comparison
+    );
+    stack_push(context, list);
+    return 0;
+}
+
+int library_define(catis_context* context) {
+    if (check_stack_type(context, 2, CATIS_TYPE_LIST, CATIS_TYPE_SYMBOL)) {
+        return 1;
+    }
+    catis_object* symbol = stack_pop(context);
+    catis_object* program = stack_pop(context);
+    add_procedure(context, symbol->string_or_symbol.pointer, NULL, program);
+    release(symbol);
+    return 0;
+}
+
+int library_if(catis_context* context) {
+    int is_while = context->frame->procedure->name[0] == 'w';
+    int is_else  = context->frame->procedure->name[2] == 'e';
+    int return_value = 1;
+    if (is_else) {
+        if (check_stack_type(
+            context,
+            3,
+            CATIS_TYPE_LIST,
+            CATIS_TYPE_LIST,
+            CATIS_TYPE_LIST
+        )) {
+            return 1;
+        }
+    }
+    else {
+        if (check_stack_type(context, 2, CATIS_TYPE_LIST, CATIS_TYPE_LIST)) {
+            return 1;
+        }
+    }
+    
+    catis_object* else_branch;
+    catis_object* if_branch;
+    catis_object* condition;
+    else_branch = is_else ? stack_pop(context) : NULL;
+    if_branch   = stack_pop(context);
+    condition   = stack_pop(context);
+
+    while (1) {
+        if (eval(context, condition)) {
+            goto return_error;
+        }
+        if (check_stack_type(context, 1, CATIS_TYPE_BOOL)) {
+            goto return_error;
+        }
+        catis_object* conditional_result = stack_pop(context);
+        int result = conditional_result->boolean;
+        release(conditional_result);
+
+        if (result) {
+            if (eval(context, if_branch)) {
+                goto return_error;
+            }
+            if (is_while) {
+                continue;
+            }
+        }
+        else if (is_else) {
+            if (eval(context, else_branch)) {
+                goto return_error;
+            }
+        }
+        break;
+    }
+    return_value = 0;
+
+return_error:
+    release(condition);
+    release(if_branch);
+    release(else_branch);
+    return return_value;
+}
+
+int library_eval(catis_context* context) {
+    if (check_stack_type(context, 1, CATIS_TYPE_LIST)) {
+        return 1;
+    }
+    catis_object* list = stack_pop(context);
+    int return_value = eval(context, list);
+    release(list);
+    return return_value;
+}
+
+int library_up_eval(catis_context* context) {
+    if (check_stack_type(context, 1, CATIS_TYPE_LIST)) {
+        return 1;
+    }
+    catis_object* list = stack_pop(context);
+    stackframe* saved = NULL;
+    if (context->frame->previous) {
+        saved = context->frame;
+        context->frame = context->frame->previous;
+    }
+    int return_value = eval(context, list);
+    if (saved) {
+        context->frame = saved;
+    }
+    release(list);
+    return return_value;
+}
+
+// TODO 956
 
 /* -- main -- */
 int main() {
