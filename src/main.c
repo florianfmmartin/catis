@@ -262,7 +262,7 @@ catis_object* parse_object(
             else if (
                 object->type == CATIS_TYPE_TUPLE &&
                 (element->type != CATIS_TYPE_SYMBOL ||
-                 element->string_or_symbol.length != 1)
+                element->string_or_symbol.length != 1)
             ) {
                 release(element);
                 release(object);
@@ -280,7 +280,7 @@ catis_object* parse_object(
             );
             object->list_or_tuple.element[
                 object->list_or_tuple.length++
-            ] = element;
+                ] = element;
 
             string = next_pointer;
             continue;
@@ -374,7 +374,7 @@ catis_object* parse_object(
             );
             object->string_or_symbol.pointer[
                 object->string_or_symbol.length++
-            ] = character;
+                ] = character;
             string++;
         }
 
@@ -504,7 +504,7 @@ void print_object(catis_object* object, int flags) {
         case CATIS_TYPE_BOOL:
             printf("#%c", object->boolean ? 't' : 'f');
             break;
-case CATIS_TYPE_INT:
+        case CATIS_TYPE_INT:
             printf("%d", object->integer);
             break;
         case CATIS_TYPE_SYMBOL:
@@ -618,7 +618,7 @@ catis_object* deep_copy(catis_object* object) {
         case CATIS_TYPE_SYMBOL:
             copy->string_or_symbol.length = object->string_or_symbol.length;
             copy->string_or_symbol.quoted = object->string_or_symbol.quoted;
-copy->string_or_symbol.pointer = catis_allocate(
+            copy->string_or_symbol.pointer = catis_allocate(
                 object->string_or_symbol.length + 1
             );
             memcpy(
@@ -730,7 +730,7 @@ catis_object* stack_peek(catis_context* context, size_t offset) {
         return NULL;
     } else {
         return context->stack[
-            context->stack_length - (offset + 1)
+        context->stack_length - (offset + 1)
         ];
     }
 }
@@ -783,7 +783,7 @@ int eval(catis_context* context, catis_object* list) {
                     set_error(
                         context,
                         object->list_or_tuple.element[
-                            context->stack_length
+                        context->stack_length
                         ]->string_or_symbol.pointer,
                         "Out of stack while capturing local"
                     );
@@ -794,7 +794,7 @@ int eval(catis_context* context, catis_object* list) {
                 for (size_t i = 0; i < object->list_or_tuple.length; i++) {
                     int index =
                         object->list_or_tuple.element[i]
-                            ->string_or_symbol.pointer[0];
+                        ->string_or_symbol.pointer[0];
                     release(context->frame->locals[index]);
                     context->frame->locals[index] =
                         context->stack[context->stack_length + i];
@@ -804,7 +804,7 @@ int eval(catis_context* context, catis_object* list) {
                 if (object->string_or_symbol.quoted) {
                     catis_object* symbol = deep_copy(object);
                     symbol->string_or_symbol.quoted = 0;
-stack_push(context, symbol);
+                    stack_push(context, symbol);
                     break;
                 }
 
@@ -900,7 +900,7 @@ catis_procedure* lookup_procedure(catis_context* context, const char* name) {
     while (this) {
         if (!strcmp(this->name, name)) {
             return this;
-    }
+        }
         this = this->next;
     }
     return NULL;
@@ -1011,9 +1011,9 @@ int library_compare(catis_context* context) {
         switch (function_name[0]) {
             case '<': result = comparison < 0; break;
             case '>': result = comparison > 0; break;
-}
+        }
     }
-stack_push(context, new_boolean(result));
+    stack_push(context, new_boolean(result));
     release(a);
     release(b);
     return 0;
@@ -1066,7 +1066,7 @@ int library_if(catis_context* context) {
             return 1;
         }
     }
-    
+
     catis_object* else_branch;
     catis_object* if_branch;
     catis_object* condition;
@@ -1192,7 +1192,7 @@ int library_list_append(catis_context* context) {
     catis_object* element = stack_pop(context);
     catis_object* list = get_unshared_object(stack_pop(context));
     list->list_or_tuple.element = catis_reallocate(
-list->list_or_tuple.element,
+        list->list_or_tuple.element,
         sizeof(catis_object*) * (list->list_or_tuple.length + 1)
     );
     list->list_or_tuple.element[list->list_or_tuple.length] = element;
@@ -1361,26 +1361,26 @@ void load_library(catis_context* context) {
     add_string_procedure(
         context, "map",
         "[(l f)   $l # (s)   0 (i)   [] \
-          [$i $s <] [ \
-           $l $i @   $f up-eval \
-           <- \
-           $i 1 + (i) \
-          ] while]"
+[$i $s <] [ \
+$l $i @   $f up-eval \
+<- \
+$i 1 + (i) \
+] while]"
     );
     add_string_procedure(
         context, "each",
         "[(l f) $l # (s) 0 (i) \
-          [$i $s <] [ \
-           $l $i @ $f up-eval \
-           $i 1 + (i) \
-          ] while]"
+[$i $s <] [ \
+$l $i @ $f up-eval \
+$i 1 + (i) \
+] while]"
     );
     add_string_procedure(context, "head", "[0 @]");
     add_string_procedure(
         context, "tail",
         "[#t (d) [] (n) [ \
-          [$d] [#f (d) drop] [$n swap <- (n)] if-else \
-         ] foreach $n]"
+[$d] [#f (d) drop] [$n swap <- (n)] if-else \
+] foreach $n]"
     );
 }
 
@@ -1474,7 +1474,7 @@ int eval_file(const char* filename, char** argv, int argc) {
 
     int return_value = eval(context, program);
     if (return_value) {
-            printf("Runtime error: %s\n", context->error_string);
+        printf("Runtime error: %s\n", context->error_string);
     }
     release(program);
     return return_value;
