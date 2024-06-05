@@ -487,9 +487,10 @@ void print_object(catis_object* object, int flags) {
     if (color) {
         switch (object->type) {
             case CATIS_TYPE_LIST:
-                escape = "\033[33;1m"; // yellow
+                escape = "\033[30;1m"; // black
                 break;
             case CATIS_TYPE_TUPLE:
+            case CATIS_TYPE_CAPTURE:
                 escape = "\033[34;1m"; // blue
                 break;
             case CATIS_TYPE_SYMBOL:
@@ -499,10 +500,10 @@ void print_object(catis_object* object, int flags) {
                 escape = "\033[32;1m"; // green
                 break;
             case CATIS_TYPE_INT:
-                escape = "\033[37;1m"; // gray
+                escape = "\033[33;1m"; // yellow
                 break;
             case CATIS_TYPE_BOOL:
-                escape = "\033[35;1m"; // gray
+                escape = "\033[33;1m"; // yellow
                 break;
         }
         printf("%s", escape);
@@ -553,8 +554,9 @@ void print_object(catis_object* object, int flags) {
             break;
         case CATIS_TYPE_LIST:
         case CATIS_TYPE_TUPLE:
+        case CATIS_TYPE_CAPTURE:
             if (repr) {
-                printf("%c", object->type == CATIS_TYPE_LIST ? '[' : '(');
+                printf("%c", object->type == CATIS_TYPE_LIST ? '[' : object->type == CATIS_TYPE_TUPLE ? '(' : '{');
             }
             for (size_t i = 0; i < object->collection.length; i++) {
                 print_object(object->collection.element[i], flags);
@@ -566,7 +568,7 @@ void print_object(catis_object* object, int flags) {
                 printf("%s", escape);
             }
             if (repr) {
-                printf("%c", object->type == CATIS_TYPE_LIST ? ']' : ')');
+                printf("%c", object->type == CATIS_TYPE_LIST ? ']' : object->type == CATIS_TYPE_TUPLE ? ')' : '}');
             }
             break;
     }
@@ -883,9 +885,7 @@ int check_stack_length(catis_context* context, size_t minimum) {
 }
 
 int check_stack_type(catis_context* context, size_t count, ...) {
-    if (check_stack_length(context, count)) {
-        return 1;
-    }
+    if (check_stack_length(context, count)) { return 1; }
     va_list types;
     va_start(types, count);
     for (size_t i = 0; i < count; i++) {
@@ -957,9 +957,7 @@ int add_string_procedure(
 
 /* -- the library -- */
 int library_math(catis_context* context) {
-    if (check_stack_type(context, 2, CATIS_TYPE_INT, CATIS_TYPE_INT)) {
-        return 1;
-    }
+    if (check_stack_type(context, 2, CATIS_TYPE_INT, CATIS_TYPE_INT)) { return 1; }
     catis_object* object_b = stack_pop(context);
     catis_object* object_a = stack_pop(context);
 
@@ -988,9 +986,7 @@ int library_math(catis_context* context) {
 }
 
 int library_compare(catis_context* context) {
-    if (check_stack_length(context, 2)) {
-        return 1;
-    }
+    if (check_stack_length(context, 2)) { return 1; }
     catis_object* b = stack_pop(context);
     catis_object* a = stack_pop(context);
 
@@ -1025,9 +1021,7 @@ int library_compare(catis_context* context) {
 }
 
 int library_logic(catis_context* context) {
-    if (check_stack_type(context, 2, CATIS_TYPE_BOOL, CATIS_TYPE_BOOL)) {
-        return 1;
-    }
+    if (check_stack_type(context, 2, CATIS_TYPE_BOOL, CATIS_TYPE_BOOL)) { return 1; }
     catis_object* object_b = stack_pop(context);
     catis_object* object_a = stack_pop(context);
 
@@ -1050,9 +1044,7 @@ int library_logic(catis_context* context) {
 }
 
 int library_sort(catis_context* context) {
-    if (check_stack_type(context, 1, CATIS_TYPE_LIST)) {
-        return 1;
-    }
+    if (check_stack_type(context, 1, CATIS_TYPE_LIST)) { return 1; }
     catis_object* list = stack_pop(context);
     list = get_unshared_object(list);
     qsort(
@@ -1066,9 +1058,7 @@ int library_sort(catis_context* context) {
 }
 
 int library_define(catis_context* context) {
-    if (check_stack_type(context, 2, CATIS_TYPE_LIST, CATIS_TYPE_SYMBOL)) {
-        return 1;
-    }
+    if (check_stack_type(context, 2, CATIS_TYPE_LIST, CATIS_TYPE_SYMBOL)) { return 1; }
     catis_object* symbol = stack_pop(context);
     catis_object* program = stack_pop(context);
     add_procedure(context, symbol->string_or_symbol.pointer, NULL, program);
@@ -1092,9 +1082,7 @@ int library_if(catis_context* context) {
         }
     }
     else {
-        if (check_stack_type(context, 2, CATIS_TYPE_LIST, CATIS_TYPE_LIST)) {
-            return 1;
-        }
+        if (check_stack_type(context, 2, CATIS_TYPE_LIST, CATIS_TYPE_LIST)) { return 1; }
     }
 
     catis_object* else_branch;
@@ -1108,9 +1096,7 @@ int library_if(catis_context* context) {
         if (eval(context, condition)) {
             goto return_error;
         }
-        if (check_stack_type(context, 1, CATIS_TYPE_BOOL)) {
-            goto return_error;
-        }
+        if (check_stack_type(context, 1, CATIS_TYPE_BOOL)) { goto return_error; }
         catis_object* conditional_result = stack_pop(context);
         int result = conditional_result->boolean;
         release(conditional_result);
@@ -1140,9 +1126,7 @@ return_error:
 }
 
 int library_eval(catis_context* context) {
-    if (check_stack_type(context, 1, CATIS_TYPE_LIST)) {
-        return 1;
-    }
+    if (check_stack_type(context, 1, CATIS_TYPE_LIST)) { return 1; }
     catis_object* list = stack_pop(context);
     int return_value = eval(context, list);
     release(list);
@@ -1150,9 +1134,7 @@ int library_eval(catis_context* context) {
 }
 
 int library_up_eval(catis_context* context) {
-    if (check_stack_type(context, 1, CATIS_TYPE_LIST)) {
-        return 1;
-    }
+    if (check_stack_type(context, 1, CATIS_TYPE_LIST)) { return 1; }
     catis_object* list = stack_pop(context);
     stackframe* saved = NULL;
     if (context->frame->previous) {
@@ -1168,9 +1150,7 @@ int library_up_eval(catis_context* context) {
 }
 
 int library_print(catis_context* context) {
-    if (check_stack_length(context, 1)) {
-        return 1;
-    }
+    if (check_stack_length(context, 1)) { return 1; }
     catis_object* object = stack_pop(context);
     print_object(object, PRINT_RAW);
     release(object);
@@ -1178,9 +1158,7 @@ int library_print(catis_context* context) {
 }
 
 int library_println(catis_context* context) {
-    if (check_stack_length(context, 1)) {
-        return 1;
-    }
+    if (check_stack_length(context, 1)) { return 1; }
     library_print(context);
     printf("\n");
     return 0;
@@ -1216,9 +1194,7 @@ int library_length(catis_context* context) {
 
 int library_list_append(catis_context* context) {
     // (list element -- list')
-    if (check_stack_type(context, 2, CATIS_TYPE_LIST, CATIS_TYPE_ANY)) {
-        return 1;
-    }
+    if (check_stack_type(context, 2, CATIS_TYPE_LIST, CATIS_TYPE_ANY)) { return 1; }
     catis_object* element = stack_pop(context);
     catis_object* list = get_unshared_object(stack_pop(context));
     list->collection.element = catis_reallocate(
@@ -1274,9 +1250,7 @@ int library_at(catis_context* context) {
 }
 
 int library_concatenate(catis_context* context) {
-    if (check_stack_length(context, 2)) {
-        return 1;
-    }
+    if (check_stack_length(context, 2)) { return 1; }
     if (context->stack[context->stack_length - 1]->type !=
         context->stack[context->stack_length - 2]->type
     ) {
@@ -1341,9 +1315,7 @@ int library_concatenate(catis_context* context) {
 }
 
 int library_to_tuple(catis_context* context) {
-    if (check_stack_type(context, 1, CATIS_TYPE_LIST)) {
-        return 1;
-    }
+    if (check_stack_type(context, 1, CATIS_TYPE_LIST)) { return 1; }
     catis_object* list = stack_pop(context);
     list = get_unshared_object(list);
     list->type = CATIS_TYPE_TUPLE;
@@ -1355,6 +1327,33 @@ int library_show_stack(catis_context* context) {
     stack_show(context);
     return 0;
 };
+
+int library_definitions(catis_context* context) {
+    catis_procedure* next = context->procedure;
+
+    while (next != NULL) {
+        printf("%s", next->name);
+        next = next->next;
+        if (next != NULL) {
+            printf("  ");
+        }
+    }
+    printf("\n");
+
+    return 0;
+}
+
+int library_unquote(catis_context* context) {
+    if (check_stack_type(context, 1, CATIS_TYPE_SYMBOL)) { return 1; }
+    catis_object* symbol = stack_pop(context);
+    catis_procedure* procedure = lookup_procedure(context, symbol->string_or_symbol.pointer);
+    if (procedure == NULL || procedure->c_procedure) {
+        stack_push(context, new_boolean(0));
+        return 0;
+    }
+    stack_push(context, procedure->procedure);
+    return 0;
+}
 
 void load_library(catis_context* context) {
     add_procedure(context, "+", library_math, NULL);
@@ -1384,6 +1383,8 @@ void load_library(catis_context* context) {
     add_procedure(context, ".", library_show_stack, NULL);
     add_procedure(context, "^", library_concatenate, NULL);
     add_procedure(context, "to-tuple", library_to_tuple, NULL);
+    add_procedure(context, "unquote", library_unquote, NULL);
+    add_procedure(context, "%defs", library_definitions, NULL);
 
     add_string_procedure(context, "dup", "[{x} $x $x]");
     add_string_procedure(context, "swap", "[{x y} $y $x]");
@@ -1406,9 +1407,8 @@ void load_library(catis_context* context) {
 }
 
 /* -- repl -- */
-void repl(void) {
+void repl(catis_context* context) {
     char buffer[1024];
-    catis_context* context = new_interpreter();
     while(1) {
         printf("catis> ");
         fflush(stdout);
@@ -1497,6 +1497,7 @@ int eval_file(const char* filename, char** argv, int argc) {
     if (return_value) {
         printf("Runtime error: %s\n", context->error_string);
     }
+    repl(context);
     release(program);
     return return_value;
 }
@@ -1504,7 +1505,8 @@ int eval_file(const char* filename, char** argv, int argc) {
 /* -- main -- */
 int main(int argc, char** argv) {
     if (argc == 1) {
-        repl();
+        catis_context* context = new_interpreter();
+        repl(context);
     }
     else if (argc >= 2) {
         if (eval_file(argv[1], argv + 2, argc - 2)) {
