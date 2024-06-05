@@ -151,7 +151,6 @@ int is_symbol(int character) {
     switch (character) {
         case '@':
         case '$':
-        case '#':
         case '+':
         case '-':
         case '*':
@@ -164,6 +163,9 @@ int is_symbol(int character) {
         case '_':
         case '.':
         case '^':
+        case '|':
+        case '&':
+        case '~':
         case '\'':
             return 1;
         default:
@@ -293,6 +295,26 @@ catis_object* parse_object(
         return NULL;
     }
 
+    // parse boolean
+    else if (string[0] == '#') {
+        if (string[1] != 't' && string[1] != 'f') {
+            set_error(
+                context,
+                string,
+                "Booleans are either #t or #f"
+            );
+            release(object);
+            return NULL;
+        }
+        object->type = CATIS_TYPE_BOOL;
+        object->boolean = string[1] == 't' ? 1 : 0;
+        string += 2;
+
+        if (next) {
+            *next = string;
+        }
+    }
+
     // parse symbol
     else if (is_symbol(string[0])) {
         object->type = CATIS_TYPE_SYMBOL;
@@ -317,26 +339,6 @@ catis_object* parse_object(
 
         if (next) {
             *next = end;
-        }
-    }
-
-    // parse boolean
-    else if (string[0] == '#') {
-        if (string[1] != 't' && string[1] != 'f') {
-            set_error(
-                context,
-                string,
-                "Booleans are either #t or #f"
-            );
-            release(object);
-            return NULL;
-        }
-        object->type = CATIS_TYPE_BOOL;
-        object->boolean = string[1] == 't' ? 1 : 0;
-        string += 2;
-
-        if (next) {
-            *next = string;
         }
     }
 
@@ -834,7 +836,7 @@ int eval(catis_context* context, catis_object* list) {
                         set_error(
                             context,
                             object->string_or_symbol.pointer,
-                            "Symbol nout bound to procedure"
+                            "Symbol not bound to procedure"
                         );
                         return 1;
                     }
@@ -946,8 +948,7 @@ int add_string_procedure(
 ) {
     catis_object* list = parse_object(NULL, program, NULL, NULL);
     if (program == NULL || list == NULL) {
-        printf("%s", name);
-        printf("Flo hit!");
+        printf("%s -- %s\n", name, program);
         return 1;
     }
     add_procedure(context, name, NULL, list);
@@ -1023,6 +1024,31 @@ int library_compare(catis_context* context) {
     return 0;
 }
 
+int library_logic(catis_context* context) {
+    if (check_stack_type(context, 2, CATIS_TYPE_BOOL, CATIS_TYPE_BOOL)) {
+        return 1;
+    }
+    catis_object* object_b = stack_pop(context);
+    catis_object* object_a = stack_pop(context);
+
+    int b = object_b->boolean;
+    int a = object_a->boolean;
+
+    int result;
+    const char* function_name = context->frame->procedure->name;
+    if (function_name[0] == '&' && function_name[1] == 0) {
+        result = a && b;
+    }
+    else if (function_name[0] == '|' && function_name[1] == 0) {
+        result = a || b;
+    }
+
+    stack_push(context, new_boolean(result));
+    release(object_b);
+    release(object_a);
+    return 0;
+}
+
 int library_sort(catis_context* context) {
     if (check_stack_type(context, 1, CATIS_TYPE_LIST)) {
         return 1;
@@ -1052,7 +1078,7 @@ int library_define(catis_context* context) {
 
 int library_if(catis_context* context) {
     int is_while = context->frame->procedure->name[0] == 'w';
-    int is_else  = context->frame->procedure->name[2] == 'e';
+    int is_else  = context->frame->procedure->name[3] == 'e';
     int return_value = 1;
     if (is_else) {
         if (check_stack_type(
@@ -1341,6 +1367,8 @@ void load_library(catis_context* context) {
     add_procedure(context, "<=", library_compare, NULL);
     add_procedure(context, ">",  library_compare, NULL);
     add_procedure(context, "<",  library_compare, NULL);
+    add_procedure(context, "&", library_logic, NULL);
+    add_procedure(context, "|", library_logic, NULL);
     add_procedure(context, "sort", library_sort, NULL);
     add_procedure(context, "define", library_define, NULL);
     add_procedure(context, "if",      library_if, NULL);
@@ -1350,7 +1378,7 @@ void load_library(catis_context* context) {
     add_procedure(context, "up-eval", library_up_eval, NULL);
     add_procedure(context, "prin", library_print, NULL);
     add_procedure(context, "print", library_println, NULL);
-    add_procedure(context, "#", library_length, NULL);
+    add_procedure(context, "len", library_length, NULL);
     add_procedure(context, "<-", library_list_append, NULL);
     add_procedure(context, "@", library_at, NULL);
     add_procedure(context, ".", library_show_stack, NULL);
@@ -1363,17 +1391,18 @@ void load_library(catis_context* context) {
 
     add_string_procedure(
         context, "map",
-        "[{l f}   $l # {s}   0 {i}   [] [$i $s <] [ $l $i @   $f up-eval   <-   $i 1 + {i} ] while]"
+        "[{l f}   $l len {s}   0 {i}   [] [$i $s <] [ $l $i @   $f up-eval   <-   $i 1 + {i} ] while]"
     );
     add_string_procedure(
         context, "each",
-        "[{l f}   $l # {s}   0 {i}   [$i $s <] [ $l $i @   $f up-eval   $i 1 + {i} ] while]"
+        "[{l f}   $l len {s}   0 {i}   [$i $s <] [ $l $i @   $f up-eval   $i 1 + {i} ] while]"
     );
     add_string_procedure(context, "head", "[0 @]");
     add_string_procedure(
         context, "tail",
         "[#t {d}   [] {n}   [ [$d] [#f {d}   drop] [$n swap <- {n}] if-else ] each $n]"
     );
+    add_string_procedure(context, "~", "[{b} [$b] [#f {b}] [#t {b}] if-else $b]");
 }
 
 /* -- repl -- */

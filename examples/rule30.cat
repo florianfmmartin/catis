@@ -1,0 +1,25 @@
+[ {l i}
+  $l len {n}
+  [$i 0 >= $i $n < &]
+  [ [$i  0  <] [$i $n + {i}] if
+    [$i $n >=] [$i $n - {i}] if
+  ] while
+  $l $i @
+] 'overflow-at define
+
+[ {t}
+  $t 0 @ $t 1 @ $t 2 @ {o w t}
+  $o 4 * $w 2 * $t 1 * + +
+] 'triplet-to-decimal define
+
+[ {n} [$n 1 >= $n 4 <= &] [1] [0] if-else ] 'rule-decimal-to-binary define
+
+[ triplet-to-decimal rule-decimal-to-binary ] 'rule-triplet-to-binary define
+
+[[0 0 0 0 0 0 0 1 0 0]] 'start-seed define
+
+[[prin] each "" print] 'flat-print-list define
+
+[ {p}
+] 'get-next-iter define
+
