@@ -1354,33 +1354,22 @@ void load_library(catis_context* context) {
     add_procedure(context, "^", library_concatenate, NULL);
     add_procedure(context, "to-tuple", library_to_tuple, NULL);
 
-    add_string_procedure(context, "dup", "[(x) $x $x]");
-    add_string_procedure(context, "swap", "[(x y) $y $x]");
-    add_string_procedure(context, "drop", "[(_)]");
+    add_string_procedure(context, "dup", "[{x} $x $x]");
+    add_string_procedure(context, "swap", "[{x y} $y $x]");
+    add_string_procedure(context, "drop", "[{_}]");
 
     add_string_procedure(
         context, "map",
-        "[(l f)   $l # (s)   0 (i)   [] \
-[$i $s <] [ \
-$l $i @   $f up-eval \
-<- \
-$i 1 + (i) \
-] while]"
+        "[{l f}   $l # {s}   0 {i}   [] [$i $s <] [ $l $i @   $f up-eval   <-   $i 1 + {i} ] while]"
     );
     add_string_procedure(
         context, "each",
-        "[(l f) $l # (s) 0 (i) \
-[$i $s <] [ \
-$l $i @ $f up-eval \
-$i 1 + (i) \
-] while]"
+        "[{l f}   $l # {s}   0 {i}   [$i $s <] [ $l $i @   $f up-eval   $i 1 + {i} ] while]"
     );
     add_string_procedure(context, "head", "[0 @]");
     add_string_procedure(
         context, "tail",
-        "[#t (d) [] (n) [ \
-[$d] [#f (d) drop] [$n swap <- (n)] if-else \
-] foreach $n]"
+        "[#t {d}   [] {n}   [ [$d] [#f {d}   drop] [$n swap <- {n}] if-else ] each $n]"
     );
 }
 
