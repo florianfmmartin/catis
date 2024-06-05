@@ -6,6 +6,8 @@
  * Highly inspired (almost copied) by aocla, see ../inspiration/aocla.c
 */
 
+/* 2024-05-04: switch capturing to {} from (), and tuple from '() to () */
+
 /* -- imports -- */
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,12 +18,13 @@
 #include <stdarg.h>
 
 /* -- types -- */
-#define CATIS_TYPE_BOOL   (1<<0)
-#define CATIS_TYPE_INT    (1<<1)
-#define CATIS_TYPE_LIST   (1<<2)
-#define CATIS_TYPE_STRING (1<<3)
-#define CATIS_TYPE_SYMBOL (1<<4)
-#define CATIS_TYPE_TUPLE  (1<<5)
+#define CATIS_TYPE_BOOL    (1<<0)
+#define CATIS_TYPE_INT     (1<<1)
+#define CATIS_TYPE_LIST    (1<<2)
+#define CATIS_TYPE_STRING  (1<<3)
+#define CATIS_TYPE_SYMBOL  (1<<4)
+#define CATIS_TYPE_TUPLE   (1<<5)
+#define CATIS_TYPE_CAPTURE (1<<6)
 #define CATIS_TYPE_ANY    INT_MAX
 
 /* -- object representation -- */
@@ -35,8 +38,7 @@ typedef struct catis_object {
         struct {
             struct catis_object** element;
             size_t length;
-            int quoted; // for tuples to know if caputuring or not
-        } list_or_tuple;
+        } collection;
         struct {
             char* pointer;
             size_t length;
@@ -112,10 +114,11 @@ void release(catis_object* object) {
         switch (object->type) {
             case CATIS_TYPE_LIST:
             case CATIS_TYPE_TUPLE:
-                for (size_t i = 0; i < object->list_or_tuple.length; i++) {
-                    release(object->list_or_tuple.element[i]);
+            case CATIS_TYPE_CAPTURE:
+                for (size_t i = 0; i < object->collection.length; i++) {
+                    release(object->collection.element[i]);
                 }
-                free(object->list_or_tuple.element);
+                free(object->collection.element);
                 break;
             case CATIS_TYPE_STRING:
             case CATIS_TYPE_SYMBOL:
@@ -218,28 +221,26 @@ catis_object* parse_object(
         }
     }
 
-    // parse list, tuple, quoted tuple
+    // parse list, tuple, capture group
     else if (
         string[0] == '[' ||
         string[0] == '(' ||
-        (string[0] == '\'' && string[1] == '(')
+        string[0] == '{'
     ) {
-        if (string[0] == '\'') {
-            object->list_or_tuple.quoted = 1;
-            string++;
-        } else {
-            object->list_or_tuple.quoted = 0;
-        }
-        object->type = string[0] == '[' ? CATIS_TYPE_LIST : CATIS_TYPE_TUPLE;
-        object->list_or_tuple.length = 0;
-        object->list_or_tuple.element = NULL;
+        object->type =
+            string[0] == '[' ? CATIS_TYPE_LIST :
+            string[0] == '(' ? CATIS_TYPE_TUPLE :
+            CATIS_TYPE_CAPTURE;
+        object->collection.length = 0;
+        object->collection.element = NULL;
         string++;
 
         while (1) {
             string = consume_space_and_comment(string, line);
             if (
                 (object->type == CATIS_TYPE_LIST  && string[0] == ']') ||
-                (object->type == CATIS_TYPE_TUPLE && string[0] == ')')
+                (object->type == CATIS_TYPE_TUPLE && string[0] == ')') ||
+                (object->type == CATIS_TYPE_CAPTURE && string[0] == '}')
             ) {
                 if (next) {
                     *next = string + 1;
@@ -260,7 +261,8 @@ catis_object* parse_object(
                 return NULL;
             }
             else if (
-                object->type == CATIS_TYPE_TUPLE &&
+                (object->type == CATIS_TYPE_TUPLE ||
+                object->type == CATIS_TYPE_CAPTURE) &&
                 (element->type != CATIS_TYPE_SYMBOL ||
                 element->string_or_symbol.length != 1)
             ) {
@@ -269,17 +271,17 @@ catis_object* parse_object(
                 set_error(
                     context,
                     string,
-                    "Tuples can only contain single character symbols"
+                    "Tuples and captures can only contain single character symbols"
                 );
                 return NULL;
             }
 
-            object->list_or_tuple.element = catis_reallocate(
-                object->list_or_tuple.element,
-                sizeof(catis_object*) * (object->list_or_tuple.length+1)
+            object->collection.element = catis_reallocate(
+                object->collection.element,
+                sizeof(catis_object*) * (object->collection.length+1)
             );
-            object->list_or_tuple.element[
-                object->list_or_tuple.length++
+            object->collection.element[
+                object->collection.length++
                 ] = element;
 
             string = next_pointer;
@@ -447,13 +449,17 @@ int compare(catis_object* a, catis_object* b) {
         (a->type == CATIS_TYPE_LIST || a->type == CATIS_TYPE_TUPLE) &&
         (b->type == CATIS_TYPE_LIST || b->type == CATIS_TYPE_TUPLE)
     ) {
-        if (a->list_or_tuple.length < b->list_or_tuple.length) {
+        if (a->collection.length < b->collection.length) {
             return -1;
         }
-        if (a->list_or_tuple.length > b->list_or_tuple.length) {
+        if (a->collection.length > b->collection.length) {
             return 1;
         }
         return 0;
+    }
+
+    else if (a->type == CATIS_TYPE_CAPTURE || b->type == CATIS_TYPE_CAPTURE) {
+        return COMPARE_TYPE_MISMATCH;
     }
 
     return COMPARE_TYPE_MISMATCH;
@@ -548,9 +554,9 @@ void print_object(catis_object* object, int flags) {
             if (repr) {
                 printf("%c", object->type == CATIS_TYPE_LIST ? '[' : '(');
             }
-            for (size_t i = 0; i < object->list_or_tuple.length; i++) {
-                print_object(object->list_or_tuple.element[i], flags);
-                if (i != object->list_or_tuple.length - 1) {
+            for (size_t i = 0; i < object->collection.length; i++) {
+                print_object(object->collection.element[i], flags);
+                if (i != object->collection.length - 1) {
                     printf(" ");
                 }
             }
@@ -604,13 +610,13 @@ catis_object* deep_copy(catis_object* object) {
             break;
         case CATIS_TYPE_LIST:
         case CATIS_TYPE_TUPLE:
-            copy->list_or_tuple.length = object->list_or_tuple.length;
-            copy->list_or_tuple.element = catis_allocate(
-                sizeof(catis_object*) *object->list_or_tuple.length
+            copy->collection.length = object->collection.length;
+            copy->collection.element = catis_allocate(
+                sizeof(catis_object*) *object->collection.length
             );
-            for (size_t i = 0; i < object->list_or_tuple.length; i++) {
-                copy->list_or_tuple.element[i] = deep_copy(
-                    object->list_or_tuple.element[i]
+            for (size_t i = 0; i < object->collection.length; i++) {
+                copy->collection.element[i] = deep_copy(
+                    object->collection.element[i]
                 );
             }
             break;
@@ -764,25 +770,23 @@ void stack_show(catis_context* context) {
 int eval(catis_context* context, catis_object* list) {
     assert(list->type == CATIS_TYPE_LIST);
 
-    for (size_t i = 0; i < list->list_or_tuple.length; i++) {
-        catis_object* object = list->list_or_tuple.element[i];
+    for (size_t i = 0; i < list->collection.length; i++) {
+        catis_object* object = list->collection.element[i];
         catis_procedure* procedure;
         context->frame->line = object->line;
 
         switch (object->type) {
             case CATIS_TYPE_TUPLE:
-                if (object->list_or_tuple.quoted) {
-                    catis_object* tuple = deep_copy(object);
-                    tuple->list_or_tuple.quoted = 0;
-                    stack_push(context, tuple);
-                    break;
-                }
+                catis_object* tuple = deep_copy(object);
+                stack_push(context, tuple);
+                break;
 
+            case CATIS_TYPE_CAPTURE:
                 // capture variables
-                if (context->stack_length < object->list_or_tuple.length) {
+                if (context->stack_length < object->collection.length) {
                     set_error(
                         context,
-                        object->list_or_tuple.element[
+                        object->collection.element[
                         context->stack_length
                         ]->string_or_symbol.pointer,
                         "Out of stack while capturing local"
@@ -790,10 +794,10 @@ int eval(catis_context* context, catis_object* list) {
                     return 1;
                 }
 
-                context->stack_length -= object->list_or_tuple.length;
-                for (size_t i = 0; i < object->list_or_tuple.length; i++) {
+                context->stack_length -= object->collection.length;
+                for (size_t i = 0; i < object->collection.length; i++) {
                     int index =
-                        object->list_or_tuple.element[i]
+                        object->collection.element[i]
                         ->string_or_symbol.pointer[0];
                     release(context->frame->locals[index]);
                     context->frame->locals[index] =
@@ -1026,8 +1030,8 @@ int library_sort(catis_context* context) {
     catis_object* list = stack_pop(context);
     list = get_unshared_object(list);
     qsort(
-        list->list_or_tuple.element,
-        list->list_or_tuple.length,
+        list->collection.element,
+        list->collection.length,
         sizeof(catis_object*),
         quicksort_object_comparison
     );
@@ -1172,7 +1176,7 @@ int library_length(catis_context* context) {
     switch (object->type) {
         case CATIS_TYPE_LIST:
         case CATIS_TYPE_TUPLE:
-            length = object->list_or_tuple.length;
+            length = object->collection.length;
             break;
         case CATIS_TYPE_STRING:
         case CATIS_TYPE_SYMBOL:
@@ -1191,12 +1195,12 @@ int library_list_append(catis_context* context) {
     }
     catis_object* element = stack_pop(context);
     catis_object* list = get_unshared_object(stack_pop(context));
-    list->list_or_tuple.element = catis_reallocate(
-        list->list_or_tuple.element,
-        sizeof(catis_object*) * (list->list_or_tuple.length + 1)
+    list->collection.element = catis_reallocate(
+        list->collection.element,
+        sizeof(catis_object*) * (list->collection.length + 1)
     );
-    list->list_or_tuple.element[list->list_or_tuple.length] = element;
-    list->list_or_tuple.length++;
+    list->collection.element[list->collection.length] = element;
+    list->collection.length++;
     stack_push(context, list);
     return 0;
 }
@@ -1220,7 +1224,7 @@ int library_at(catis_context* context) {
     size_t length =
         object->type == CATIS_TYPE_STRING ?
         object->string_or_symbol.length :
-        object->list_or_tuple.length;
+        object->collection.length;
     if (index < 0) {
         index = length + index;
     }
@@ -1235,8 +1239,8 @@ int library_at(catis_context* context) {
             );
         }
         else {
-            stack_push(context, object->list_or_tuple.element[index]);
-            retain(object->list_or_tuple.element[index]);
+            stack_push(context, object->collection.element[index]);
+            retain(object->collection.element[index]);
         }
     }
     release(object);
@@ -1290,21 +1294,21 @@ int library_concatenate(catis_context* context) {
             source->string_or_symbol.length;
     }
     else {
-        for (size_t i = 0; i < source->list_or_tuple.length; i++) {
-            retain(source->list_or_tuple.element[i]);
+        for (size_t i = 0; i < source->collection.length; i++) {
+            retain(source->collection.element[i]);
         }
-        destination->list_or_tuple.element = catis_reallocate(
-            destination->list_or_tuple.element,
-            (destination->list_or_tuple.length +
-            source->list_or_tuple.length) * sizeof(catis_object*)
+        destination->collection.element = catis_reallocate(
+            destination->collection.element,
+            (destination->collection.length +
+            source->collection.length) * sizeof(catis_object*)
         );
         memcpy(
-            destination->list_or_tuple.element +
-            destination->list_or_tuple.length,
-            source->list_or_tuple.element,
-            source->list_or_tuple.length * sizeof(catis_object*)
+            destination->collection.element +
+            destination->collection.length,
+            source->collection.element,
+            source->collection.length * sizeof(catis_object*)
         );
-        destination->list_or_tuple.length += source->list_or_tuple.length;
+        destination->collection.length += source->collection.length;
     }
     release(source);
     return 0;
@@ -1317,7 +1321,6 @@ int library_to_tuple(catis_context* context) {
     catis_object* list = stack_pop(context);
     list = get_unshared_object(list);
     list->type = CATIS_TYPE_TUPLE;
-    list->list_or_tuple.quoted = 0;
     stack_push(context, list);
     return 0;
 }
