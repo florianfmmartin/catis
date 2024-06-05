@@ -1404,6 +1404,7 @@ void load_library(catis_context* context) {
         "[#t {d}   [] {n}   [ [$d] [#f {d}   drop] [$n swap <- {n}] if-else ] each $n]"
     );
     add_string_procedure(context, "~", "[{b} [$b] [#f {b}] [#t {b}] if-else $b]");
+    add_string_procedure(context, "range", "[{s e} [] {r} [$s $e <] [$r $s <- {r} $s 1 + {s}] while $r]");
 }
 
 /* -- repl -- */

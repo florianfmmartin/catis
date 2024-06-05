@@ -1,11 +1,13 @@
 [ {l i}
   $l len {n}
-  [$i 0 >= $i $n < &]
+  [$i 0 < $i $n >= |]
   [ [$i  0  <] [$i $n + {i}] if
     [$i $n >=] [$i $n - {i}] if
   ] while
   $l $i @
-] 'overflow-at define
+] 'over-at-flow define
+
+[{l i d} $l len {n} [$i 0 < $i $n >= |] [$d] [$l $i @] if-else] 'over-at-default define
 
 [ {t}
   $t 0 @ $t 1 @ $t 2 @ {o w t}
@@ -16,10 +18,34 @@
 
 [ triplet-to-decimal rule-decimal-to-binary ] 'rule-triplet-to-binary define
 
-[[0 0 0 0 0 0 0 1 0 0]] 'start-seed define
-
-[[prin] each "" print] 'flat-print-list define
+[[{i} [$i 0 ==] [" " prin] ["X" prin] if-else] each "" print] 'print-seed define
 
 [ {p}
+  [ ] {r}
+  $p len {n}
+  0 $n range
+  [ {i}
+    []
+    $p $i 1 - 0 over-at-default <-
+    $p $i     0 over-at-default <-
+    $p $i 1 + 0 over-at-default <-
+    rule-triplet-to-binary
+    $r swap <- {r}
+  ] each
+  $r
 ] 'get-next-iter define
+
+[ {w t}
+  [] {s}
+  0 $w range
+  [ {i}
+    [$w $i - 2 ==] [1] [0] if-else
+    $s swap <- {s}
+  ] each
+  0 $t range
+  [ {_}
+    $s print-seed
+    $s get-next-iter {s}
+  ] each
+] 'do-rule define
 
