@@ -7,6 +7,7 @@
 */
 
 /* 2024-05-04: switch capturing to {} from (), and tuple from '() to () */
+/* 2024-05-05: add concurrency via joins */
 
 /* -- imports -- */
 #include <stdio.h>
@@ -58,6 +59,24 @@ typedef struct catis_procedure {
     int (*c_procedure)(struct catis_context*);
     struct catis_procedure* next;
 } catis_procedure;
+
+/* -- join representation -- */
+typedef struct catis_object_linked_list {
+    catis_object* object;
+    catis_object_linked_list* next;
+} catis_object_linked_list;
+
+typedef struct catis_join_slot {
+    const char name;
+    catis_object_linked_list* stack;
+} catis_join_slot;
+
+typedef struct catis_join {
+    const char* name;
+    catis_object* procedure;
+    catis char* slots_name;
+    catis_join_slot* slots;
+} catis_join;
 
 /* -- stack frames for local variables -- */
 #define CATIS_MAX_LOCALVARS 256
@@ -948,7 +967,7 @@ int add_string_procedure(
 ) {
     catis_object* list = parse_object(NULL, program, NULL, NULL);
     if (program == NULL || list == NULL) {
-        printf("%s -- %s\n", name, program);
+        printf("Couldn't parse name: %s; program: %s\n", name, program);
         return 1;
     }
     add_procedure(context, name, NULL, list);
@@ -1063,6 +1082,25 @@ int library_define(catis_context* context) {
     catis_object* program = stack_pop(context);
     add_procedure(context, symbol->string_or_symbol.pointer, NULL, program);
     release(symbol);
+    return 0;
+}
+
+int library_join(catis_context* context) {
+    if (check_stack_type(context, 3, CATIS_TYPE_LIST, CATIS_TYPE_TUPLE, CATIS_TYPE_SYMBOL)) {
+        return 1;
+    }
+    catis_object* symbol = stack_pop(context);
+    catis_object* slots = stack_pop(context);
+    catis_object* program = stack_pop(context);
+
+    const char* name = symbol->string_or_symbol.pointer;
+    const char* slots_name[slots->collection.length];
+    // TODO: iterate over slots tuple to fill slots_name
+
+    // TODO: define add_join
+    add_join(context, symbol->string_or_symbol.pointer, slots, program);
+    release(symbol);
+    release(slots);
     return 0;
 }
 
@@ -1370,6 +1408,7 @@ void load_library(catis_context* context) {
     add_procedure(context, "|", library_logic, NULL);
     add_procedure(context, "sort", library_sort, NULL);
     add_procedure(context, "define", library_define, NULL);
+    add_procedure(context, "join", library_join, NULL);
     add_procedure(context, "if",      library_if, NULL);
     add_procedure(context, "if-else", library_if, NULL);
     add_procedure(context, "while",   library_if, NULL);
