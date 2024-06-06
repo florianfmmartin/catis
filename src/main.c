@@ -52,30 +52,32 @@ typedef struct catis_object {
 /* -- procedure representation -- */
 // to reference before implementing
 struct catis_context;
+struct catis_join;
 
 typedef struct catis_procedure {
     const char* name;
-    catis_object* procedure; // if NULL then is a C procedure
+    catis_object* procedure;
     int (*c_procedure)(struct catis_context*);
+    struct catis_join* join_procedure;
     struct catis_procedure* next;
 } catis_procedure;
 
 /* -- join representation -- */
 typedef struct catis_object_linked_list {
     catis_object* object;
-    catis_object_linked_list* next;
+    struct catis_object_linked_list* next;
 } catis_object_linked_list;
 
 typedef struct catis_join_slot {
     const char name;
-    catis_object_linked_list* stack;
+    struct catis_object_linked_list* stack;
 } catis_join_slot;
 
 typedef struct catis_join {
     const char* name;
+    const char* slots_name;
     catis_object* procedure;
-    catis char* slots_name;
-    catis_join_slot* slots;
+    struct catis_join_slot** slots;
 } catis_join;
 
 /* -- stack frames for local variables -- */
@@ -861,7 +863,7 @@ int eval(catis_context* context, catis_object* list) {
                         );
                         return 1;
                     }
-                    if (procedure->c_procedure) {
+                    else if (procedure->c_procedure) {
                         catis_procedure* previous = context->frame->procedure;
                         context->frame->procedure = procedure;
                         int error = procedure->c_procedure(context);
@@ -870,8 +872,7 @@ int eval(catis_context* context, catis_object* list) {
                             return error;
                         }
                     }
-                    // catis procedure
-                    else {
+                    else if (procedure->procedure) {
                         stackframe* previous = context->frame;
                         context->frame = new_stackframe(context);
                         context->frame->procedure = procedure;
@@ -881,6 +882,9 @@ int eval(catis_context* context, catis_object* list) {
                         if (error) {
                             return error;
                         }
+                    }
+                    else if (procedure->join_procedure) {
+                        printf("TODO\n");
                     }
                 }
                 break;
@@ -943,10 +947,11 @@ catis_procedure* new_procedure(catis_context* context, const char* name) {
 void add_procedure(
     catis_context* context,
     const char* name,
-    int(*c_procedure)(catis_context *),
-    catis_object* list
+    catis_object* list,
+    catis_join* join_procedure,
+    int(*c_procedure)(catis_context *)
 ) {
-    assert((c_procedure != NULL) + (list != NULL) == 1);
+    assert((c_procedure != NULL) + (list != NULL) + (join_procedure != NULL) == 1);
     catis_procedure* procedure = lookup_procedure(context, name);
     if (procedure) {
         if (procedure->procedure != NULL) {
@@ -958,6 +963,7 @@ void add_procedure(
     }
     procedure->procedure = list;
     procedure->c_procedure = c_procedure;
+    procedure->join_procedure = join_procedure;
 }
 
 int add_string_procedure(
@@ -970,7 +976,16 @@ int add_string_procedure(
         printf("Couldn't parse name: %s; program: %s\n", name, program);
         return 1;
     }
-    add_procedure(context, name, NULL, list);
+    add_procedure(context, name, list, NULL, NULL);
+    return 0;
+}
+
+int add_join(catis_context* context, const char* name, const char* slots_name, catis_object* program) {
+    catis_join* join_procedure;
+    join_procedure->name = name;
+    join_procedure->slots_name = slots_name;
+    join_procedure->procedure = program;
+    add_procedure(context, name, NULL, join_procedure, NULL);
     return 0;
 }
 
@@ -1076,11 +1091,11 @@ int library_sort(catis_context* context) {
     return 0;
 }
 
-int library_define(catis_context* context) {
+int library_defun(catis_context* context) {
     if (check_stack_type(context, 2, CATIS_TYPE_LIST, CATIS_TYPE_SYMBOL)) { return 1; }
     catis_object* symbol = stack_pop(context);
     catis_object* program = stack_pop(context);
-    add_procedure(context, symbol->string_or_symbol.pointer, NULL, program);
+    add_procedure(context, symbol->string_or_symbol.pointer, program, NULL, NULL);
     release(symbol);
     return 0;
 }
@@ -1089,17 +1104,27 @@ int library_join(catis_context* context) {
     if (check_stack_type(context, 3, CATIS_TYPE_LIST, CATIS_TYPE_TUPLE, CATIS_TYPE_SYMBOL)) {
         return 1;
     }
-    catis_object* symbol = stack_pop(context);
+    catis_object* join_name = stack_pop(context);
     catis_object* slots = stack_pop(context);
     catis_object* program = stack_pop(context);
 
-    const char* name = symbol->string_or_symbol.pointer;
-    const char* slots_name[slots->collection.length];
-    // TODO: iterate over slots tuple to fill slots_name
+    const char* name = join_name->string_or_symbol.pointer;
+    char* slots_name;
+    for (size_t i = 0; i < slots->collection.length; i++) {
+        catis_object* symbol = slots->collection.element[i];
+        if (symbol->type != CATIS_TYPE_SYMBOL) {
+            set_error(context, name, "Slots must be symbols");
+            return 1;
+        }
+        slots_name[i] = symbol->string_or_symbol.pointer[0];
+    }
 
-    // TODO: define add_join
-    add_join(context, symbol->string_or_symbol.pointer, slots, program);
-    release(symbol);
+    int result = add_join(context, join_name->string_or_symbol.pointer, slots_name, program);
+    if (result) {
+        set_error(context, name, "Could not add join");
+        return 1;
+    }
+    release(join_name);
     release(slots);
     return 0;
 }
@@ -1389,41 +1414,46 @@ int library_unquote(catis_context* context) {
         stack_push(context, new_boolean(0));
         return 0;
     }
-    stack_push(context, procedure->procedure);
+    else if (procedure->procedure) {
+        stack_push(context, procedure->procedure);
+    }
+    else if (procedure->join_procedure) {
+        stack_push(context, procedure->join_procedure->procedure);
+    }
     return 0;
 }
 
 void load_library(catis_context* context) {
-    add_procedure(context, "+", library_math, NULL);
-    add_procedure(context, "-", library_math, NULL);
-    add_procedure(context, "*", library_math, NULL);
-    add_procedure(context, "/", library_math, NULL);
-    add_procedure(context, "==", library_compare, NULL);
-    add_procedure(context, "!=", library_compare, NULL);
-    add_procedure(context, ">=", library_compare, NULL);
-    add_procedure(context, "<=", library_compare, NULL);
-    add_procedure(context, ">",  library_compare, NULL);
-    add_procedure(context, "<",  library_compare, NULL);
-    add_procedure(context, "&", library_logic, NULL);
-    add_procedure(context, "|", library_logic, NULL);
-    add_procedure(context, "sort", library_sort, NULL);
-    add_procedure(context, "define", library_define, NULL);
-    add_procedure(context, "join", library_join, NULL);
-    add_procedure(context, "if",      library_if, NULL);
-    add_procedure(context, "if-else", library_if, NULL);
-    add_procedure(context, "while",   library_if, NULL);
-    add_procedure(context, "eval", library_eval, NULL);
-    add_procedure(context, "up-eval", library_up_eval, NULL);
-    add_procedure(context, "prin", library_print, NULL);
-    add_procedure(context, "print", library_println, NULL);
-    add_procedure(context, "len", library_length, NULL);
-    add_procedure(context, "<-", library_list_append, NULL);
-    add_procedure(context, "@", library_at, NULL);
-    add_procedure(context, ".", library_show_stack, NULL);
-    add_procedure(context, "^", library_concatenate, NULL);
-    add_procedure(context, "to-tuple", library_to_tuple, NULL);
-    add_procedure(context, "unquote", library_unquote, NULL);
-    add_procedure(context, "%defs", library_definitions, NULL);
+    add_procedure(context, "+", NULL, NULL, library_math);
+    add_procedure(context, "-", NULL, NULL, library_math);
+    add_procedure(context, "*", NULL, NULL, library_math);
+    add_procedure(context, "/", NULL, NULL, library_math);
+    add_procedure(context, "==", NULL, NULL, library_compare);
+    add_procedure(context, "!=", NULL, NULL, library_compare);
+    add_procedure(context, ">=", NULL, NULL, library_compare);
+    add_procedure(context, "<=", NULL, NULL, library_compare);
+    add_procedure(context, ">", NULL, NULL,  library_compare);
+    add_procedure(context, "<", NULL, NULL,  library_compare);
+    add_procedure(context, "&", NULL, NULL, library_logic);
+    add_procedure(context, "|", NULL, NULL, library_logic);
+    add_procedure(context, "sort", NULL, NULL, library_sort);
+    add_procedure(context, "defun", NULL, NULL, library_defun);
+    add_procedure(context, "join", NULL, NULL, library_join);
+    add_procedure(context, "if", NULL, NULL,      library_if);
+    add_procedure(context, "if-else", NULL, NULL, library_if);
+    add_procedure(context, "while", NULL, NULL,   library_if);
+    add_procedure(context, "eval", NULL, NULL, library_eval);
+    add_procedure(context, "up-eval", NULL, NULL, library_up_eval);
+    add_procedure(context, "prin", NULL, NULL, library_print);
+    add_procedure(context, "print", NULL, NULL, library_println);
+    add_procedure(context, "len", NULL, NULL, library_length);
+    add_procedure(context, "<-", NULL, NULL, library_list_append);
+    add_procedure(context, "@", NULL, NULL, library_at);
+    add_procedure(context, ".", NULL, NULL, library_show_stack);
+    add_procedure(context, "^", NULL, NULL, library_concatenate);
+    add_procedure(context, "to-tuple", NULL, NULL, library_to_tuple);
+    add_procedure(context, "unquote", NULL, NULL, library_unquote);
+    add_procedure(context, "%defs", NULL, NULL, library_definitions);
 
     add_string_procedure(context, "dup", "[{x} $x $x]");
     add_string_procedure(context, "swap", "[{x y} $y $x]");

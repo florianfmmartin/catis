@@ -5,20 +5,20 @@
     [$i $n >=] [$i $n - {i}] if
   ] while
   $l $i @
-] 'over-at-flow define
+] 'over-at-flow defun
 
-[{l i d} $l len {n} [$i 0 < $i $n >= |] [$d] [$l $i @] if-else] 'over-at-default define
+[{l i d} $l len {n} [$i 0 < $i $n >= |] [$d] [$l $i @] if-else] 'over-at-default defun
 
 [ {t}
   $t 0 @ $t 1 @ $t 2 @ {o w t}
   $o 4 * $w 2 * $t 1 * + +
-] 'triplet-to-decimal define
+] 'triplet-to-decimal defun
 
-[ {n} [$n 1 >= $n 4 <= &] [1] [0] if-else ] 'rule-decimal-to-binary define
+[ {n} [$n 1 >= $n 4 <= &] [1] [0] if-else ] 'rule-decimal-to-binary defun
 
-[ triplet-to-decimal rule-decimal-to-binary ] 'rule-triplet-to-binary define
+[ triplet-to-decimal rule-decimal-to-binary ] 'rule-triplet-to-binary defun
 
-[[{i} [$i 0 ==] [" " prin] ["X" prin] if-else] each "" print] 'print-seed define
+[[{i} [$i 0 ==] [" " prin] ["X" prin] if-else] each "" print] 'print-seed defun
 
 [ {p}
   [ ] {r}
@@ -33,7 +33,7 @@
     $r swap <- {r}
   ] each
   $r
-] 'get-next-iter define
+] 'get-next-iter defun
 
 [ {w t}
   [] {s}
@@ -47,5 +47,5 @@
     $s print-seed
     $s get-next-iter {s}
   ] each
-] 'do-rule define
+] 'do-rule defun
 
