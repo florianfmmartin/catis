@@ -20,9 +20,6 @@ catis> 'map unquote
 
 ## Future features
 
-### Multi char variables
-
-
 ### Concurrency
 Via joins: procedures that only run when all named inputs have been received.
 
