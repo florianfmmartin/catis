@@ -18,7 +18,7 @@
 
 [ triplet-to-decimal rule-decimal-to-binary ] 'rule-triplet-to-binary defun
 
-[[{i} [$i 0 ==] [" " prin] ["X" prin] if-else] each "" print] 'print-seed defun
+[[{i} [$i 0 ==] [" " prin] ["█" prin] if-else] each "" print] 'print-seed defun
 
 [ {p}
   [ ] {r}
